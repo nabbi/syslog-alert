@@ -99,7 +99,7 @@ oo::class create Alert {
         #address, email or page
         
         foreach g $group {
-            # SELECT :a or $a resulted in a literal return of that var value
+            # TODO SELECT :a or $a resulted in a literal return of that var value
             switch -glob -- $a {
                 "email" { append results { } [Db eval {SELECT "email" FROM contacts WHERE "group"=:g}] }
 
@@ -141,55 +141,57 @@ oo::class create Alert {
             
             # Generates the inner switch body from the provided configurations
             #match patterns
-            set i 0
+            set i 1
             foreach p $pattern {
 
-                incr i
                 #check if this is the last pattern in the list
-                if { [llength $pattern] == $i } {
+                #shares same body
+                if { [llength $pattern] > $i } {
+                    incr i
+                    append sw "$p -\n"
+                    continue
+                }
 
-                    #global ignore pattens
-                    if { $ignore == 1 } {
-                        append sw "$p \{ continue \}\n"
-
-                    } else {
-                        append sw "$p \{ \n"
-
-                        #sub exclude patterns
-                        foreach e $exclude {
-                            # split the key=value (ie host="test*"
-                            lassign [split $e "="] ek ev
-                            append sw "\tif \{ \[string match -nocase $ev \$log($ek)\] \} \{ continue \}\n"
-                        }
-
-                        #check if we throttle or alert
-                        append sw "\tif \{ \[\$syslog recent $delay $hash\] \} \{\n"
-
-                        # this section was added to tweak the subject lines form custom config scripts
-                        # overrides the default of using the hash
-                        append sw "\t\tset subject $hash\n"
-                        if { [string length $custom] > 0 } {
-                            append sw "$custom\n"
-                        }
-
-                        #email groups
-                        if { [string length $email] > 0 } {
-                            append sw "\t\t\$syslog email \"$email\" \"\$subject\" \$log(all)\n"
-                        }
-
-                        #page groups
-                        if { [string length $page] > 0 } {
-                            append sw "\t\t\$syslog page \"$page\" \"\$subject\" \$log(msg)\n"
-                        }
-
-                        # close this switch condition
-                        append sw "\t\}\n\}\n"
-                    }
+                #global ignore pattens
+                if { $ignore == 1 } {
+                    append sw "$p \{ continue \}\n"
+                    continue
 
                 } else {
-                    #shares same body
-                    append sw "$p -\n"
+                    append sw "$p \{ \n"
+
+                    #sub exclude patterns
+                    foreach e $exclude {
+                        # split the key=value (ie host="test*")
+                        lassign [split $e "="] ek ev
+                        append sw "\tif \{ \[string match -nocase $ev \$log($ek)\] \} \{ continue \}\n"
+                    }
+
+                    #check if we throttle or alert
+                    append sw "\tif \{ \[\$syslog recent $delay $hash\] \} \{\n"
+
+                    # this section was added to tweak the subject lines form custom config scripts
+                    # overrides the default of using the hash
+                    append sw "\t\tset subject $hash\n"
+                    if { [string length $custom] > 0 } {
+                        append sw "$custom\n"
+                    }
+
+                    #email groups
+                    if { [string length $email] > 0 } {
+                        append sw "\t\t\$syslog email \"$email\" \"\$subject\" \$log(all)\n"
+                    }
+
+                    #page groups
+                    if { [string length $page] > 0 } {
+                        append sw "\t\t\$syslog page \"$page\" \"\$subject\" \$log(msg)\n"
+                    }
+
+                    # close this switch condition
+                    append sw "\t\}\n\}\n"
+                    continue
                 }
+
             }
 
         }
