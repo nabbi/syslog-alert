@@ -21,7 +21,7 @@ oo::class create Alert {
         
         # create table for tracking which alerts
         # note that hash is not cryptographic, it's a composure of custom strings and values from log messages
-        Db eval {CREATE TABLE alert(time int, hash text)}
+        Db eval {CREATE TABLE alert(time int, hash text primary key)}
 
         # create and populate table for looking up email and pager addresses for group contacts
         my Contacts_import
@@ -36,26 +36,22 @@ oo::class create Alert {
         ##variable trace
 
         set now [clock seconds]
+        set time [Db eval {SELECT time FROM alert WHERE hash=:hash}]
 
         ## check if this is new hash to throttle
-        if { [Db exists {SELECT 1 FROM alert WHERE hash=:hash ORDER BY time DESC}] } {
-
-            set time [Db eval {SELECT time FROM alert WHERE hash=:hash ORDER BY time DESC}]
-
-            if { [expr {$now-$time}]  > $delta } {
-                ##if ($trace) { "## alert - previous event aged out" }
-                Db eval {UPDATE alert SET time=:now WHERE hash=:hash}
-                return 200
-            } else {
-                ##if ($trace) { puts "## suppressed - last alert occurred within $delta" }
-                return 0
-            }
-        } else {
+        if { [string length $time] <= 0} {
             ##if ($trace) { puts "## alert - first time event" }
             Db eval {INSERT INTO alert VALUES(:now,:hash)}
             return 100
-
+        } elseif { [expr {$now-$time}]  > $delta } {
+            ##if ($trace) { "## alert - previous event aged out" }
+            Db eval {UPDATE alert SET time=:now WHERE hash=:hash}
+            return 200
+        } else {
+            ##if ($trace) { puts "## suppressed - last alert occurred within $delta" }
+            return 0
         }
+
     }
 
     method purge {} {
@@ -105,9 +101,9 @@ oo::class create Alert {
         foreach g $group {
             # SELECT :a or $a resulted in a literal return of that var value
             switch -glob -- $a {
-                "email" { append results { } [Db eval {SELECT "email" FROM contacts WHERE "group"=:g ORDER BY name DESC}] }
+                "email" { append results { } [Db eval {SELECT "email" FROM contacts WHERE "group"=:g}] }
 
-                "page" { append results { } [Db eval {SELECT "page" FROM contacts WHERE "group"=:g ORDER BY name DESC}] }
+                "page" { append results { } [Db eval {SELECT "page" FROM contacts WHERE "group"=:g}] }
 
                 default { return }
             }
@@ -263,7 +259,7 @@ set syslog [Alert new]
 #
 # TODO implement as a method
 #
-append newproc "proc sw \{\} \{\n"
+append newproc "proc patterns \{\} \{\n"
 append newproc "global log\n"
 append newproc "global syslog\n"
 append newproc "switch -glob -nocase -- \$log(all) \{\n[$syslog generate_switch] \n\}\n"
@@ -288,7 +284,7 @@ while { [gets stdin line] >= 0 } {
     set log(program) [lindex [split $log(msghdr) "\["] 0]
 
     #run our switch proc instead of an eval here for performance gain
-    sw
+    patterns
 
     # periodically clean out the database of old alerts to free memory
     # TODO suspect there is a better approach
