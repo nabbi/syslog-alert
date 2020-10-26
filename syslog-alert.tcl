@@ -3,36 +3,138 @@
 exec tclsh "$0" "$@"
 
 ## Copyright (C) 2020 nic@boet.cc
+# https://github.com/nabbi/syslog-alert
 
 
-oo::class create Alert {
-
-    variable debug
-    variable trace
-    
+oo::class create SQLite {
     constructor {} {
-        variable Db
-        set debug 0
-        set trace 0
-
-        # initialize database
         package require sqlite3
         sqlite3 Db :memory:
-        
-        # create table for tracking which alerts
-        # note that hash is not cryptographic, it's a composure of custom strings and values from log messages
-        Db eval {CREATE TABLE alert(time int, hash text primary key)}
-
-        # create and populate table for looking up email and pager addresses for group contacts
-        my Contacts_import
-
+        next
     }
 
     destructor {
         Db close
     }
+}
 
-    method recent {delta hash} {
+oo::class create Contacts {
+
+    constructor {} {
+        variable debug
+        variable trace
+        set debug 0
+        set trace 0
+
+        # create and populate table for looking up email and pager addresses for group contacts
+        my ImportContacts
+        if {$debug} { puts "## Database ## contacts imported" }
+        next
+    }
+
+    method ImportContacts {} {
+        # read contacts list and into the database table
+        ##variable trace
+
+        #{name} {group} {email} {page}
+        set conf [open /etc/syslog-ng/alert-contacts.conf {r}]
+        set lines [split [read $conf] "\n"]
+        close $conf
+
+        Db eval {CREATE TABLE contacts(name text, "group" text, email text, page text)}
+
+        foreach l $lines {
+
+            if { [string index $l 0] == "#" || [string index $l 0] == " " || [string length $l] == 0 } {
+                continue
+            }
+
+            lassign $l name group email page
+
+            ##if {$trace} { puts "#trace contacts_import# name: $name group: $group email: $email page: $page" }
+            Db eval {INSERT INTO contacts VALUES(:name,:group,:email,:page)}
+
+        }
+
+    }
+
+    method Group {groups a} {
+        #groups to lookup
+        #address, email or mobile-pager
+        
+        foreach g $groups {
+            # TODO SELECT :a or $a resulted in a literal return of that var value
+            switch -glob -- $a {
+                "email" { append results { } [Db eval {SELECT "email" FROM contacts WHERE "group"=:g}] }
+
+                "page" { append results { } [Db eval {SELECT "page" FROM contacts WHERE "group"=:g}] }
+
+                default { return }
+            }
+        }
+
+        #format results for csv sendmail recipient
+        return [join [lsearch -all -inline -not -exact $results {}] ", "]
+    }
+
+    method page {g s b} {
+        #group contact to page
+        #subject
+        #body
+
+        set to [my contacts_group $g "page"]
+
+        #silently fail as we do not want to exit. check configs for valid entire
+        if { [string length $to] > 0 } {
+            my sendmail "$to" $s $b
+        }
+    }
+
+    method email {g s b} {
+        #groups to email
+        #subject
+        #body
+
+        set to [my Group $g "email"]
+
+        #silently fail as we do not want to exit. check configs for valid entire
+        if { [string length $to] > 0 } {
+            my Sendmail $to "Subject: $s" $b
+        }
+    }
+
+    method Sendmail {to subject body} {
+        variable debug
+
+        set msg "From: syslog@[info hostname]"
+        append msg \n "To: $to" \n
+        append msg $subject \n\n
+        append msg $body \n
+
+        if {$debug} { puts "## msg: $msg" }
+        #background to not wait as this blocks further message processing
+        exec sendmail -oi -t << $msg &
+    }
+
+}
+
+
+oo::class create Alert {
+    mixin SQLite Contacts
+
+    constructor {} {
+        variable debug
+        variable trace
+
+        # create table for tracking which alerts
+        Db eval {CREATE TABLE alert(time int, hash text primary key)}
+        if {$debug} { puts "## Database ## alert table created" }
+
+        my CreatePatterns
+        if {$debug} { puts "## Config imported" }
+    }
+
+    method Recent {delta hash} {
         ##variable trace
 
         set now [clock seconds]
@@ -56,7 +158,6 @@ oo::class create Alert {
 
     method purge {} {
         # the sql table can grow in memory if we do not purge old events
-        
         ##variable trace
 
         # ideally this should be greater than your largest throttle delta
@@ -68,55 +169,33 @@ oo::class create Alert {
 
     }
 
-    method Contacts_import {} {
-        # read contacts list and into the database table
-        ##variable trace
-
-        #{name} {group} {email} {page}
-        set conf [open /etc/syslog-ng/alert-contacts.conf {r}]
-        set lines [split [read $conf] "\n"]
-        close $conf
- 
-        Db eval {CREATE TABLE contacts(name text, "group" text, email text, page text)}
-
-        foreach l $lines {
-
-            if { [string index $l 0] == "#" || [string index $l 0] == " " || [string length $l] == 0 } {
-                continue
-            }
-
-            lassign $l name group email page
-
-            ##if {$trace} { puts "#trace contacts_import# name: $name group: $group email: $email page: $page" }
-            Db eval {INSERT INTO contacts VALUES(:name,:group,:email,:page)}
-
-        }
-
-    }
-
-    method contacts_group {group a} {
-        #group
-        #address, email or page
-        
-        foreach g $group {
-            # TODO SELECT :a or $a resulted in a literal return of that var value
-            switch -glob -- $a {
-                "email" { append results { } [Db eval {SELECT "email" FROM contacts WHERE "group"=:g}] }
-
-                "page" { append results { } [Db eval {SELECT "page" FROM contacts WHERE "group"=:g}] }
-
-                default { return }
-            }
-        }
-
-        #format results for csv sendmail recipient
-        return [join [lsearch -all -inline -not -exact $results {}] ", "]
-    }
-    
-    method generate_switch {} {
-        # read configuration file to generate switch condition body.
- 
+    method CreatePatterns {} {
+        #assemble the patterns method from user configuration file
         variable trace
+
+        append method "oo::define Alert method patterns \{line\} \{\n\n"
+
+        # "{${ISODATE}} {${HOST}} {${FACILITY}} {${LEVEL}} {${MSGHDR}} {${MSG}}"
+        append method "lassign \$line log(isodate) log(host) log(facility) log(level) log(msghdr) log(msg)\n"
+        append method "set log(all) \"\$log(isodate) \$log(host) \$log(facility).\$log(level) \$log(msghdr)\$log(msg)\"\n"
+
+        # TODO This isn't perfect as some vendors don't encode messages consitently
+        # consider using syslog-ng PROGRAM var and adjust the input templates.
+        # consider replacing trailing ": " for when pid was not include in MSGHDR
+        set split "\\\["
+        append method "set log(program) \[lindex \[split \$log(msghdr) \"$split\"\] 0\]\n"
+
+        append method "\nswitch -glob -nocase -- \$log(all) \{\n[my ImportAlert] \}\n"
+        append method "\}\n"
+
+        eval $method
+
+        if {$trace} { puts "## method patterns\n[info class definition Alert patterns]" }
+    }
+
+    method ImportAlert {} {
+        # read configuration file to generate switch condition body.
+        ##variable trace
 
         set conf [open /etc/syslog-ng/alert.conf {r}]
         set lines [split [read $conf] "\n"]
@@ -168,7 +247,7 @@ oo::class create Alert {
                     }
 
                     #check if we throttle or alert
-                    append sw "\tif \{ \[\$syslog recent $delay $hash\] \} \{\n"
+                    append sw "\tif \{ \[my Recent $delay $hash\] \} \{\n"
 
                     # this section was added to tweak the subject lines form custom config scripts
                     # overrides the default of using the hash
@@ -179,12 +258,12 @@ oo::class create Alert {
 
                     #email groups
                     if { [string length $email] > 0 } {
-                        append sw "\t\t\$syslog email \"$email\" \"\$subject\" \$log(all)\n"
+                        append sw "\t\tmy email \"$email\" \"\$subject\" \$log(all)\n"
                     }
 
                     #page groups
                     if { [string length $page] > 0 } {
-                        append sw "\t\t\$syslog page \"$page\" \"\$subject\" \$log(msg)\n"
+                        append sw "\t\t\my page \"$page\" \"\$subject\" \$log(msg)\n"
                     }
 
                     # close this switch condition
@@ -201,73 +280,17 @@ oo::class create Alert {
             puts "fatal: no switch conditions compiled."
             exit 1
         }
-        if {$trace} { puts "##trace compiled switch conditions##\n$sw##trace end##" }
+        ##if {$trace} { puts "## Imported alerts.conf\n$sw" }
         return $sw
     }
 
-    method page {g s b} {
-        #group contact to page
-        #subject
-        #body
-
-        set to [my contacts_group $g "page"]
-
-        #silently fail as we do not want to exit. check configs for valid entire
-        if { [string length $to] > 0 } {
-            my sendmail "$to" $s $b
-        }
-    }
-
-    method email {g s b} {
-        #group contact to email
-        #subject
-        #body
-
-        set to [my contacts_group $g "email"]
-
-        #silently fail as we do not want to exit. check configs for valid entire
-        if { [string length $to] > 0 } {
-            my sendmail $to "Subject: $s" $b
-        }
-    }
-
-    method sendmail {to subject body} {
-        variable debug
-
-        set msg "From: syslog@[info hostname]"
-        append msg \n "To: $to" \n
-        append msg $subject \n\n
-        append msg $body \n
-
-        if {$debug} { puts "## msg: $msg" }
-        #background to not wait as this blocks further message processing
-        exec sendmail -oi -t << $msg &
-    }
-
-
 }
 
-global syslog
+
+
+
 set syslog [Alert new]
 ###
-
-# we take a performance hit by dynamically creating this config block
-# save .2us by pre-compiling this as a proc instead of eval within while loop
-# global syslog;OO and log;stdin to accomidate this change
-#
-# eval switch 6.8385 microseconds per iteration
-# proc switch 6.6365 microseconds per iteration
-# real switch 6.456 microseconds per iteration
-#
-# TODO implement as a method
-#
-append newproc "proc patterns \{\} \{\n"
-append newproc "global log\n"
-append newproc "global syslog\n"
-append newproc "switch -glob -nocase -- \$log(all) \{\n[$syslog generate_switch] \n\}\n"
-append newproc "\}\n"
-eval $newproc
-unset newproc
 
 # read from standard input
 while { [gets stdin line] >= 0 } {
@@ -276,17 +299,8 @@ while { [gets stdin line] >= 0 } {
     # userful while debugging, avoids null pointer issues as a result
     if { [llength $line] != 6 } { continue }
 
-    global log
-    # "{${ISODATE}} {${HOST}} {${FACILITY}} {${LEVEL}} {${MSGHDR}} {${MSG}}"
-    lassign $line log(isodate) log(host) log(facility) log(level) log(msghdr) log(msg)
-    set log(all) "$log(isodate) $log(host) $log(facility).$log(level) $log(msghdr)$log(msg)"
-    # TODO This isn't perfect as some vendors don't encode messages consitently
-    # consider using syslog-ng PROGRAM var and adjust the input templates.
-    # consider replacing trailing ": " for when pid was not include in MSGHDR
-    set log(program) [lindex [split $log(msghdr) "\["] 0]
-
-    #run our switch proc instead of an eval here for performance gain
-    patterns
+    #call our dynamically created method
+    $syslog patterns $line
 
     # periodically clean out the database of old alerts to free memory
     # TODO suspect there is a better approach
