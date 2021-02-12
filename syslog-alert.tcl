@@ -233,7 +233,7 @@ oo::class create Alert {
 
                 #global ignore pattens
                 if { $ignore == 1 } {
-                    append sw "$p \{ continue \}\n"
+                    append sw "$p \{ return \}\n"
                     continue
 
                 } else {
@@ -243,7 +243,7 @@ oo::class create Alert {
                     foreach e $exclude {
                         # split the key=value (ie host="test*")
                         lassign [split $e "="] ek ev
-                        append sw "\tif \{ \[string match -nocase $ev \$log($ek)\] \} \{ continue \}\n"
+                        append sw "\tif \{ \[string match -nocase $ev \$log($ek)\] \} \{ return \}\n"
                     }
 
                     #check if we throttle or alert
