@@ -51,6 +51,7 @@ Or to test this with syslog-ng generate events with logger (or trigger the real 
 ## alert-contacts.conf
 
 copy into /etc/syslog-ng/
+
 This file defines, based on a group label name, who should receive an alert
 
 syntax tcl list
@@ -68,6 +69,8 @@ syntax tcl list
 Both are optional. pages get a smaller formatted message, not the entire raw log like email
 If someone only has one type of contact method then just leave it blank (ie "{}")
 
+
+Example:
 ```
 {user1} {admin} {user1@example.com} {1111111111@carrier.com}
 {user2} {admin} {user2@example.com, user2other@exampleother.com} {}
@@ -80,8 +83,7 @@ If someone only has one type of contact method then just leave it blank (ie "{}"
 
 copy into /etc/syslog-ng/
 
-This file defines which events to alert on by dynamically generating the tcl switch conditions
-First matched so order matters
+This file defines which events to alert on by dynamically generating the tcl switch conditions. First matched so order matters
 
 syntax tcl list, some elements are lists themselves
 ```
@@ -115,9 +117,7 @@ EXCLUDE pattern sub negates what matched at PATTERN
 HASH controls how we throttle an alert
 *  This is also the default subject for email and pages
 *  Usually I include the host which allows similar events from other nodes to still alert
-
-> This can be anything, as it does not pattern match against the real message, although they are linked so this needs to be unique for the log 
-event and if too generic or matched too soon, it could suppress other events
+** This can be anything, as it does not pattern match against the real message, although they are linked so this needs to be unique for the log event and if too generic or matched too soon, it could suppress other events
 
 ```
   {"$log(host) label"}
@@ -177,6 +177,7 @@ While I included logic to import csv without this, I decided to rewrite the conf
 using lists instead as I found the statements easier to read.
 Simpler. Possibly more portable as some distros ship with dated packages
 
+
 ## sqlite3 (tested with 3.35.5)
 
 compiled with --enable-tcl
@@ -185,18 +186,16 @@ Was not written with TDBC - one could easily patch this if that is more desirabl
 as the database calls are not complex
 
 
-
-## sendmail
+## sendmail (tested with sSMTP 2.64)
 
 expects to find a "sendmail" compatible in the system path
-I am using sSMTP (2.64) 
 
 
 ## syslog-ng (tested with 3.32.2)
 
 This program depends on adjusting your /etc/syslog-ng/syslog-ng.conf
-Below describes how to integrate this into your config as an external program call
 
+Below describes how to integrate this into your config as an external program call
 
 ### Template
 In order to parse log events into variables, a predictable and parsable structure
@@ -219,16 +218,16 @@ destination d_alert { program("/usr/local/sbin/syslog-alert.tcl" template(t_aler
 
 
 ### Filters
-So. This script was written with the mindset of pre-filtering events within syslog-ng
+This script was written with the mindset of pre-filtering events within syslog-ng
 The expectation is, if you pipe messages to this alert script then you intend send emails.
 
-> Think of syslog-ng as the course comb and this script as the fine side of the comb.
-> This results in some duplication of config mgmt; in syslog-ng.conf and within this script
-> While it appears capable to handle forward all events, I haven't extensively load tested this
-> inversed behavior.
+Think of syslog-ng as the course comb and this script as the fine side of the comb.
+This results in some duplication of config mgmt; in syslog-ng.conf and within this script.
+While it appears capable to handle forward all events, I haven't extensively load tested this inversed behavior.
 
+```
 filter f_level3 { level (err..emerg); };
-
+```
 
 ### Log
 This links your filters and destination together
