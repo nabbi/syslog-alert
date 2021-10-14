@@ -1,7 +1,0 @@
-# configuration files
-# if you change this path you'll have to patch the script
-cp -iv alert*.conf /etc/syslog-ng/
-
-# script
-# if you chage this path you'll need to update syslog-ng.conf
-cp -iv syslog-alert.tcl /usr/local/sbin/

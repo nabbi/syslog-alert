@@ -45,7 +45,7 @@ oo::class create Contacts {
 
         foreach l $lines {
 
-            if { [string index $l 0] == "#" || [string index $l 0] == " " || [string length $l] == 0 } {
+            if { [string index $l 0] == "#" || [string length $l] == 0 } {
                 continue
             }
 
@@ -84,7 +84,7 @@ oo::class create Contacts {
 
         set to [my contacts_group $g "page"]
 
-        #silently fail as we do not want to exit. check configs for valid entire
+        #silently fail as we do not want to exit. check configs for valid entry
         if { [string length $to] > 0 } {
             my sendmail "$to" $s $b
         }
@@ -97,7 +97,7 @@ oo::class create Contacts {
 
         set to [my Group $g "email"]
 
-        #silently fail as we do not want to exit. check configs for valid entire
+        #silently fail as we do not want to exit. check configs for valid entry
         if { [string length $to] > 0 } {
             my Sendmail $to "Subject: $s" $b
         }
@@ -203,7 +203,7 @@ oo::class create Alert {
 
         foreach l $lines {
 
-            if { [string index $l 0] == "#" || [string index $l 0] == " " || [string length $l] == 0 } {
+            if { [string index $l 0] == "#" || [string length $l] == 0 } {
                 continue
             }
             
