@@ -6,9 +6,11 @@ See USAGE.md for configuration setup
 ## configuration files
 ```
 cp -iv alert*.conf /etc/syslog-ng/
+chmod 600 /etc/syslog-ng/alert*.conf
 ```
 
 ## script
 ```
 cp -iv syslog-alert.tcl /usr/local/sbin/
+chmod 700 /usr/local/sbin/syslog-alert.tcl
 ```
