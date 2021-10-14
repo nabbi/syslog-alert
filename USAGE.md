@@ -63,8 +63,8 @@ syntax tcl list
 * NAME is unused, exists for your config doco purposes
 * GROUP is a label for a team or SME for who should receive a particular type of event
 * EMAIL and PAGE/mobile both expect valid email addresses.
-** multiple email address can be added if csv defined (ie ", " separator)
-** We aren't doing any sms integration so Lookup their carriers phonenumber@domain online
+    * multiple email address can be added if csv defined (ie ", " separator)
+    * We aren't doing any sms integration so Lookup their carriers phonenumber@domain online
 
 Both are optional. pages get a smaller formatted message, not the entire raw log like email
 If someone only has one type of contact method then just leave it blank (ie "{}")
@@ -92,8 +92,8 @@ syntax tcl list, some elements are lists themselves
 
 PATTERN nocase glob matches against $log(all)
 * all=is the complete reassembled log message
-** Must escape with double quotes to match tcl switch;  unless it's the default (you must define that here too)
-**  These are a list of lists to allow the same throttling and action to occur with minimizing config lines and minimizing duplicate switch bodies in memory.
+    * Must escape with double quotes to match tcl switch;  unless it's the default (you must define that here too)
+    *  These are a list of lists to allow the same throttling and action to occur with minimizing config lines and minimizing duplicate switch bodies in memory.
 
 ``` 
   {{""}}
@@ -104,20 +104,20 @@ PATTERN nocase glob matches against $log(all)
 
 EXCLUDE pattern sub negates what matched at PATTERN
 * Also nocase glob matches but this filters to a specific section of the log message
-** Multiple conditions are treated as OR
-** if you need AND then use all= and string together the template order with glob wildcards
+    * Multiple conditions are treated as OR
+    * if you need AND then use all= and string together the template order with glob wildcards
 
 ```
   {}
   {{}}
   {{host="foo*"} {level="debug"}}
-  {{all="*crit*cron**some event*"}}
+  {{all="*crit*cron*some event*"}}
   {{msg="*some other event all daemons*"}}
 ```
 HASH controls how we throttle an alert
 *  This is also the default subject for email and pages
 *  Usually I include the host which allows similar events from other nodes to still alert
-** This can be anything, as it does not pattern match against the real message, although they are linked so this needs to be unique for the log event and if too generic or matched too soon, it could suppress other events
+    * This can be anything, as it does not pattern match against the real message, although they are linked so this needs to be unique for the log event and if too generic or matched too soon, it could suppress other events
 
 ```
   {"$log(host) label"}
@@ -136,7 +136,7 @@ DELAY throttles how long between getting another alert
 EMAIL these groups
 * multiple can be listed separated with a space
 * can be omitted, then no action is taken
-**  (ie maybe use with IGNORE or CUSTOM if no EMAIL action is desired)
+    *  (ie maybe use with IGNORE or CUSTOM if no EMAIL action is desired)
 
 ```
   {}
