@@ -82,11 +82,11 @@ oo::class create Contacts {
         #subject
         #body
 
-        set to [my contacts_group $g "page"]
+        set to [my Group $g "page"]
 
         #silently fail as we do not want to exit. check configs for valid entry
         if { [string length $to] > 0 } {
-            my sendmail "$to" $s $b
+            my Sendmail "$to" $s $b
         }
     }
 
