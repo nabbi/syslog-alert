@@ -1,9 +1,15 @@
 #!/bin/sh
 # the next line restarts using tclsh \
-exec tclsh "$0" "$@"
+exec /usr/bin/env tclsh "$0" "$@"
 
 ## Copyright (C) 2020 nic@boet.cc
 # https://github.com/nabbi/syslog-alert
+
+# Harden PATH to trusted directories only
+set ::env(PATH) "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Maximum allowed length for a single syslog input line (bytes)
+set ::MAX_LINE_LENGTH 8192
 
 
 oo::class create SQLite {
@@ -106,6 +112,10 @@ oo::class create Contacts {
     method Sendmail {to subject body} {
         variable debug
 
+        # Strip newlines/carriage returns from header fields to prevent header injection
+        set to [string map {\n {} \r {}} $to]
+        set subject [string map {\n {} \r {}} $subject]
+
         set msg "From: syslog@[info hostname]"
         append msg \n "To: $to" \n
         append msg $subject \n\n
@@ -113,7 +123,7 @@ oo::class create Contacts {
 
         if {$debug} { puts "## msg: $msg" }
         #background to not wait as this blocks further message processing
-        exec sendmail -oi -t << $msg &
+        exec -- sendmail -oi -t << $msg &
     }
 
 }
@@ -162,7 +172,7 @@ oo::class create Alert {
 
         # ideally this should be greater than your largest throttle delta
         # 3 days
-        set historic [expr {259200 - [clock seconds]}]
+        set historic [expr {[clock seconds] - 259200}]
 
         Db eval {DELETE FROM alert WHERE time<=:historic}
         ##if {$trace} { puts "#trace# purged records [clock seconds] $historic" }
@@ -207,14 +217,26 @@ oo::class create Alert {
                 continue
             }
             
-            #TODO validate inputs
+            #validate inputs
             if { [llength $l] != 8 } {
                 puts "#ignore bad config line: $l"
                 continue
             }
-            
+
             #{{pattern1} {pattern2}} {{exclude1} {exclude2}} {hash} {delay} {email} {page} {ignore} {custom tcl code}
             lassign $l pattern exclude hash delay email page ignore custom
+
+            # validate delay is a non-negative integer
+            if { ![string is integer -strict $delay] || $delay < 0 } {
+                puts "#ignore bad delay value in config line: $l"
+                continue
+            }
+
+            # validate ignore is 0, 1, or empty
+            if { $ignore ne {} && $ignore != 0 && $ignore != 1 } {
+                puts "#ignore bad ignore flag in config line: $l"
+                continue
+            }
 
             ##if {$trace} { puts "#trace events_import# p:$pattern e:$exclude h:$hash d:$delay e:$email p:$page i:$ignore c:$custom" }
             
@@ -293,17 +315,22 @@ set syslog [Alert new]
 ###
 
 # read from standard input
+set counter 0
 while { [gets stdin line] >= 0 } {
-    
+
+    # reject excessively long lines to prevent resource exhaustion
+    if { [string length $line] > $::MAX_LINE_LENGTH } { continue }
+
     # skip line if we did not get expected list length
-    # userful while debugging, avoids null pointer issues as a result
+    # useful while debugging, avoids null pointer issues as a result
     if { [llength $line] != 6 } { continue }
 
     #call our dynamically created method
-    $syslog patterns $line
+    if { [catch {$syslog patterns $line} err] } {
+        puts "#error processing line: $err"
+    }
 
     # periodically clean out the database of old alerts to free memory
-    # TODO suspect there is a better approach
     incr counter
     if {$counter > 100} {
         set counter 0
