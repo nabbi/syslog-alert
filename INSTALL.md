@@ -3,7 +3,14 @@ If you change these paths then you'll have to patch the script and/or update sys
 
 See USAGE.md for configuration setup
 
-## configuration files
+## configuration file (new format)
+```
+cp -iv syslog-alert.conf /etc/syslog-ng/
+chmod 600 /etc/syslog-ng/syslog-alert.conf
+chown root:root /etc/syslog-ng/syslog-alert.conf
+```
+
+## configuration files (legacy format)
 ```
 cp -iv alert*.conf /etc/syslog-ng/
 chmod 600 /etc/syslog-ng/alert*.conf
@@ -17,11 +24,21 @@ chmod 700 /usr/local/sbin/syslog-alert.tcl
 chown root:root /usr/local/sbin/syslog-alert.tcl
 ```
 
+## Validate config after installation
+```
+syslog-alert.tcl --check-config
+syslog-alert.tcl --dump-config
+```
+
+Or with a specific config path:
+```
+syslog-alert.tcl --check-config --config /etc/syslog-ng/syslog-alert.conf
+```
+
 ## Security notes
 
-- The configuration files (especially `alert.conf`) are **trusted input** and can
-  execute arbitrary Tcl code via the CUSTOM field. Ensure they are only writable
-  by root and not world-readable (mode 600).
+- The configuration files (especially rules with `custom` code) are **trusted input** and can
+  execute arbitrary Tcl code. Ensure they are only writable by root and not world-readable (mode 600).
 - The script runs as the UID of syslog-ng. Restrict file ownership accordingly.
 - Syslog input is treated as untrusted. Lines exceeding 8192 bytes are dropped.
 - A hardened PATH is set at startup: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`

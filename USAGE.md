@@ -1,42 +1,164 @@
 # Usage
 
 I originally wrote this as I needed a solution for throttling sendmail events piped from syslog-ng
-which provided custom per host+message throttling yet was flexible to selectively send specific 
+which provided custom per host+message throttling yet was flexible to selectively send specific
 events to a different distribution list or an after hours pager/mobile.
 
 Delightfully written in Tcl as an experiment with TclOO
 SQLite is used for an in memory database of tracking events
 
-This has gone through various rewrites over the years. It started as a Perl script over a decade ago
-which flocked a file for event tracking, it was a crude database (if you could even call it that).
-Refreshed a few years ago in TclOO to leverage SQLite. For me, this was one of those scripts which
-silently ran in the background and forgotten about. So this stayed around in this state for another year or 
-three before I picked it up again.
-This latest update expands filtering functionality, cleaner per group alerting, and leverages configuration
-files instead of hacking the script.
 
+## CLI flags
+
+```
+--config <path>      Specify config file location (new format)
+--check-config       Validate config and exit (0 = ok, 1 = error)
+--dump-config        Load config and print normalized form
+--explain "<line>"   Dry-run a syslog line, show matched rule without sending email
+```
+
+### Examples
+
+Validate your config:
+```
+./syslog-alert.tcl --check-config --config syslog-alert.conf
+```
+
+Print normalized config:
+```
+./syslog-alert.tcl --dump-config --config syslog-alert.conf
+```
+
+Test what rule matches a syslog line (dry-run, no email sent):
+```
+./syslog-alert.tcl --explain "{2025-01-01T00:00:00} {testhost} {daemon} {err} {mdadm[123]:} {raid event detected}" --config syslog-alert.conf
+```
+
+Normal operation via stdin:
+```
+echo '{2025-01-01T00:00:00} {testhost} {daemon} {err} {mdadm[123]:} {raid event detected}' | ./syslog-alert.tcl --config syslog-alert.conf
+```
+
+
+## syslog-alert.conf (new format)
+
+Single-file configuration using Tcl dict syntax. This replaces both `alert.conf` and `alert-contacts.conf`.
+
+Copy to `/etc/syslog-ng/syslog-alert.conf` or specify with `--config <path>`.
+
+### Structure
+
+```tcl
+global {
+    from    syslog@myhost.example.com
+    debug   0
+    trace   0
+}
+
+contacts {
+    username {
+        groups  {group1 group2}
+        email   user@example.com
+        page    1111111111@carrier.com
+    }
+}
+
+rules {
+    rule-name {
+        pattern  {"*glob*"}
+        exclude  {field="*pattern*"}
+        subject  {$log(host) description}
+        delay    3600
+        email    {group1 group2}
+        page     group1
+        ignore   0
+        custom   {set subject "$log(host) custom"}
+    }
+}
+```
+
+### global section (optional)
+
+- **from** - From address for sendmail. Defaults to `syslog@<hostname>`
+- **debug** - Enable debug output (0/1)
+- **trace** - Enable trace output showing generated switch method (0/1)
+
+### contacts section (required)
+
+Each contact is a named dict with:
+
+- **groups** - Group memberships (string or list). Each group becomes a separate row in the internal lookup table
+- **email** - Email address(es). Multiple addresses can be csv: `{one@ex.com, two@ex.com}`
+- **page** - Pager/mobile address(es). Same format as email
+
+At least one of `email` or `page` is required per contact.
+
+Example:
+```tcl
+contacts {
+    user1 {
+        groups  {admin disk}
+        email   user1@example.com
+        page    1111111111@carrier.com
+    }
+    user2 {
+        groups  oncall
+        email   {user2work@example.com, user2home@example.com}
+    }
+    user3 {
+        groups  disk
+        page    3333333333@carrier.com
+    }
+}
+```
+
+### rules section (required)
+
+Rules are evaluated in order, first match wins. Each rule is a named dict with:
+
+- **pattern** (required) - Glob pattern(s) matched against `$log(all)` (the full reassembled log line). Use `default` for a catch-all.
+  ```tcl
+  pattern  {"*mdadm*"}
+  pattern  {"*alert*" "*crit*"}
+  pattern  {default}
+  ```
+
+- **exclude** (optional) - Sub-exclusion patterns. Glob matched against a specific log field. Multiple conditions are OR'd.
+  ```tcl
+  exclude  {host="foo*" level="debug"}
+  exclude  {all="*crit*cron*some event*"}
+  ```
+
+- **subject** (optional) - Subject line for email/page. Also used as the throttle hash. Supports `$log()` variable substitution.
+  ```tcl
+  subject  {$log(host) raid event}
+  ```
+
+- **delay** (optional, default 0) - Throttle delay in seconds between repeated alerts for the same hash.
+
+- **email** (optional) - Group name(s) to email.
+
+- **page** (optional) - Group name(s) to page. Pages receive a shorter message (just `$log(msg)`).
+
+- **ignore** (optional, default 0) - Set to 1 to silently drop matching lines.
+
+- **custom** (optional) - Arbitrary Tcl code executed before email/page actions. Runs as the syslog-ng UID.
+  ```tcl
+  custom   {set subject "$log(host) event"}
+  ```
 
 
 ## Notes on testing and troubleshooting
 
 As a result of using only an in memory database, if this program crashes or syslog-ng restarts,
-you may see alerts which notify again within X threshold. syslog-ng expects said program not to exit and 
-continually accept stdio -- you will see the pid change if this script happens to crash as syslog-ng will restart it 
+you may see alerts which notify again within X threshold. syslog-ng expects said program not to exit and
+continually accept stdio -- you will see the pid change if this script happens to crash as syslog-ng will restart it
 
  *syslog.info syslog-ng[]: Child program exited, restarting; cmdline='/usr/local/sbin/syslog-alert.tcl', status='256'*
 
-This usually indicates a syntax issue introduced into the code base. Since the switch condition is now generated 
-from the user configuration file, errors have been reduced from manually editing conditions within code.
-There is still high probability of a bad config to load or miss parse. Very minimal non-existent validations are performed
-when reading these conf files.
-Read up on TCL Lists if this is foreign to you.
-
-That being said, what I have seen more likely is frequent restarts to syslog-ng itself triggering alerts to trigger again;
-that is the anticipated design.
-
+Use `--check-config` and `--explain` to validate your configuration before deploying.
 
 You can run this program directly to validate the behaviors.
-Toggle debug and trace flags to log more info to stdout
 Paste or pipe in some test log messages to see what happens, this must match the syslog-ng template.
 
 ```
@@ -48,11 +170,17 @@ Paste or pipe in some test log messages to see what happens, this must match the
 Or to test this with syslog-ng generate events with logger (or trigger the real condition on the source)
 
 
-## alert-contacts.conf
+## Legacy configuration (deprecated)
 
-copy into /etc/syslog-ng/
+The old two-file format is still supported but deprecated. When no `syslog-alert.conf` is found
+(and no `--config` flag is used), the program falls back to reading:
 
-This file defines, based on a group label name, who should receive an alert
+- `/etc/syslog-ng/alert-contacts.conf` - contact definitions
+- `/etc/syslog-ng/alert.conf` - alert rules
+
+A deprecation notice is printed to stdout when legacy files are used.
+
+### alert-contacts.conf
 
 syntax tcl list
 ```
@@ -60,115 +188,15 @@ syntax tcl list
 {name} {group} {one@example.com, two@example.com} {pager1@example.com, pager2@example.com}
 ```
 
-* NAME is unused, exists for your config doco purposes
-* GROUP is a label for a team or SME for who should receive a particular type of event
-* EMAIL and PAGE/mobile both expect valid email addresses.
-    * multiple email address can be added if csv defined (ie ", " separator)
-    * We aren't doing any sms integration so Lookup their carriers phonenumber@domain online
-
-Both are optional. pages get a smaller formatted message, not the entire raw log like email
-If someone only has one type of contact method then just leave it blank (ie "{}")
-
-
-Example:
-```
-{user1} {admin} {user1@example.com} {1111111111@carrier.com}
-{user2} {admin} {user2@example.com, user2other@exampleother.com} {}
-{user3} {disk} {} {3333333333@carrier.com}
-{user4} {admin} {user4@example.com} {4444444444@carrier.com}
-{user4} {disk} {user4@example.com} {4444444444@carrier.com}
-```
-
-## alert.conf
-
-copy into /etc/syslog-ng/
-
-This file defines which events to alert on by dynamically generating the tcl switch conditions. First matched so order matters
+### alert.conf
 
 syntax tcl list, some elements are lists themselves
 ```
 {{pattern1} {pattern2}} {{exclude1} {exclude2}} {hash} {delay} {email} {page} {ignore} {custom tcl code}
 ```
 
-PATTERN nocase glob matches against $log(all)
-* all=is the complete reassembled log message
-    * Must escape with double quotes to match tcl switch;  unless it's the default (you must define that here too)
-    *  These are a list of lists to allow the same throttling and action to occur with minimizing config lines and minimizing duplicate switch bodies in memory.
+See the example `alert.conf` and `alert-contacts.conf` files for reference.
 
-``` 
-  {{""}}
-  {{"*mdadm*}}
-  {{"*alert*"} {"*crit*"}}
-  {{default}}
-```
-
-EXCLUDE pattern sub negates what matched at PATTERN
-* Also nocase glob matches but this filters to a specific section of the log message
-    * Multiple conditions are treated as OR
-    * if you need AND then use all= and string together the template order with glob wildcards
-
-```
-  {}
-  {{}}
-  {{host="foo*"} {level="debug"}}
-  {{all="*crit*cron*some event*"}}
-  {{msg="*some other event all daemons*"}}
-```
-HASH controls how we throttle an alert
-*  This is also the default subject for email and pages
-*  Usually I include the host which allows similar events from other nodes to still alert
-    * This can be anything, as it does not pattern match against the real message, although they are linked so this needs to be unique for the log event and if too generic or matched too soon, it could suppress other events
-
-```
-  {"$log(host) label"}
-  {"common message from all sources"}
-```
-
-DELAY throttles how long between getting another alert
-* Defined as an integer in seconds
-
-```
-  {600}
-  {3600}
-  {86400}
-```
-
-EMAIL these groups
-* multiple can be listed separated with a space
-* can be omitted, then no action is taken
-    *  (ie maybe use with IGNORE or CUSTOM if no EMAIL action is desired)
-
-```
-  {}
-  {admin disk}
-  {oncall}
-```
-
-PAGE these groups
-* same as EMAIL
-
-IGNORE is a boolean true false
-* This does not process the pattern for alerting
-
-> Consider filtering heavy noise within syslog-ng itself
-
-```
-  {}
-  {0}
-  {1}
-```
-
-CUSTOM eval as tcl code
-* This extends further flexibility of the program by tclsh code injection
-*  customize the action behavior, positioned before email/page actions
-
->  A good reminder to limit modification to the config files and tcl script this will exec as the UID of syslog-ng
-
-```
-  {}
-  {set subject "$log(host) event"}
-  {exec /usr/local/bin/something-cool.sh}
-```
 
 ## tcl 8.6 (tested with 8.6.11)
 
@@ -216,6 +244,11 @@ Note that this is where you bind the template formatting
 destination d_alert { program("/usr/local/sbin/syslog-alert.tcl" template(t_alert) mark-freq(0) ); };
 ```
 
+To use a custom config path:
+```
+destination d_alert { program("/usr/local/sbin/syslog-alert.tcl --config /etc/syslog-ng/syslog-alert.conf" template(t_alert) mark-freq(0) ); };
+```
+
 
 ### Filters
 This script was written with the mindset of pre-filtering events within syslog-ng
@@ -235,5 +268,3 @@ This links your filters and destination together
 ```
 log { source(s_net); source(s_local); filter(f_level3); destination(d_alert);  };
 ```
-
-
