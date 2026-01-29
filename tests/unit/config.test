@@ -1,0 +1,67 @@
+#!/usr/bin/env tclsh
+# Unit tests for config loading
+package require tcltest
+namespace import ::tcltest::*
+
+set thisDir [file dirname [file normalize [info script]]]
+set rootDir [file join $thisDir .. ..]
+set configsDir [file join $thisDir .. fixtures configs]
+set script [file join $rootDir syslog-alert.tcl]
+
+# Helper: source the script in a child interp is impractical due to OO/exec.
+# Instead, test via CLI invocations (lightweight unit-style tests).
+
+test config-good-minimal {Valid minimal config passes check} -body {
+    exec [info nameofexecutable] $script --check-config --config [file join $configsDir good-minimal.conf]
+} -result "Configuration OK"
+
+test config-good-full {Valid full config passes check} -body {
+    exec [info nameofexecutable] $script --check-config --config [file join $configsDir good-full.conf]
+} -result "Configuration OK"
+
+test config-missing-contacts {Missing contacts section fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-missing-contacts.conf] 2>@1} output
+    string match "*missing*contacts*" $output
+} -result 1
+
+test config-missing-rules {Missing rules section fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-missing-rules.conf] 2>@1} output
+    string match "*missing*rules*" $output
+} -result 1
+
+test config-bad-syntax {Bad dict syntax fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-syntax.conf] 2>@1} output
+    string match "*fatal*" $output
+} -result 1
+
+test config-contact-no-email {Contact without email or page fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-contact-no-email.conf] 2>@1} output
+    string match "*must have at least one*" $output
+} -result 1
+
+test config-rule-no-pattern {Rule without pattern fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-rule-no-pattern.conf] 2>@1} output
+    string match "*missing*pattern*" $output
+} -result 1
+
+test config-bad-delay {Non-integer delay fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-delay.conf] 2>@1} output
+    string match "*invalid delay*" $output
+} -result 1
+
+test config-negative-delay {Negative delay fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config [file join $configsDir bad-negative-delay.conf] 2>@1} output
+    string match "*invalid delay*" $output
+} -result 1
+
+test config-nonexistent-file {Non-existent config file fails} -body {
+    catch {exec [info nameofexecutable] $script --check-config --config /nonexistent/path.conf 2>@1} output
+    expr {$output ne "Configuration OK"}
+} -result 1
+
+test config-dump {dump-config produces rule output} -body {
+    set out [exec [info nameofexecutable] $script --dump-config --config [file join $configsDir good-full.conf]]
+    expr {[string match "*raid-event*" $out] && [string match "*pattern:*" $out]}
+} -result 1
+
+cleanupTests

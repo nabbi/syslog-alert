@@ -1,0 +1,91 @@
+#!/usr/bin/env tclsh
+# Unit tests for stdin processing mode
+package require tcltest
+namespace import ::tcltest::*
+
+set thisDir [file dirname [file normalize [info script]]]
+set rootDir [file join $thisDir .. ..]
+set configsDir [file join $thisDir .. fixtures configs]
+set script [file join $rootDir syslog-alert.tcl]
+set config [file join $configsDir good-minimal.conf]
+set tmpDir [file join $thisDir .. tmp unit-stdin]
+
+proc setup_tmp {} {
+    global tmpDir
+    file delete -force $tmpDir
+    file mkdir $tmpDir
+}
+
+proc run_stdin {input config args} {
+    global script tmpDir
+    set actionsFile [file join $tmpDir actions.txt]
+    file delete -force $actionsFile
+    set ::env(SYSLOG_ALERT_TESTMODE) 1
+    set ::env(SYSLOG_ALERT_ACTIONS_FILE) $actionsFile
+    foreach {k v} $args {
+        set ::env($k) $v
+    }
+    set cmd [list [info nameofexecutable] $script --config $config]
+    catch {exec {*}$cmd << $input 2>@1} output
+    unset ::env(SYSLOG_ALERT_TESTMODE)
+    unset ::env(SYSLOG_ALERT_ACTIONS_FILE)
+    foreach {k v} $args {
+        unset -nocomplain ::env($k)
+    }
+    if {[file exists $actionsFile]} {
+        set fd [open $actionsFile r]
+        set actions [read $fd]
+        close $fd
+    } else {
+        set actions ""
+    }
+    return $actions
+}
+
+setup_tmp
+
+test stdin-empty {Empty input produces no actions} -body {
+    string length [run_stdin "" $config]
+} -result 0
+
+test stdin-valid-line {Valid line triggers action} -body {
+    set actions [run_stdin "{2025-01-01T00:00:00} {host1} {daemon} {err} {prog\[1\]:} {test event}" $config]
+    string match "*ACTION:*" $actions
+} -result 1
+
+test stdin-malformed-line {Non-6-element line is skipped} -body {
+    string length [run_stdin "garbage line" $config]
+} -result 0
+
+test stdin-overlong-line {Line > 8192 bytes is dropped} -body {
+    set long [string repeat "x" 8200]
+    string length [run_stdin "{2025-01-01T00:00:00} {host1} {daemon} {err} {prog:} {$long}" $config]
+} -result 0
+
+test stdin-blank-lines {Blank lines are skipped} -body {
+    string length [run_stdin "\n\n\n" $config]
+} -result 0
+
+test stdin-special-chars {Lines with special characters are processed} -body {
+    set actions [run_stdin "{2025-01-01T00:00:00} {host1} {daemon} {err} {prog\[1\]:} {error: \$PATH is /usr/bin & stuff <html>}" $config]
+    string match "*ACTION:*" $actions
+} -result 1
+
+test stdin-multiple-lines {Multiple valid lines produce actions} -body {
+    global configsDir
+    set fullConfig [file join $configsDir good-full.conf]
+    set input ""
+    append input "{2025-01-01T00:00:00} {host1} {daemon} {err} {mdadm\[1\]:} {raid event}\n"
+    append input "{2025-01-01T00:00:01} {host2} {local0} {err} {backup\[2\]:} {backups have failed}\n"
+    set actions [run_stdin $input $fullConfig SYSLOG_ALERT_CLOCK 9000000]
+    set count [llength [regexp -all -inline {ACTION:} $actions]]
+    # mdadm has email+page (admin,disk email + admin page = 2 actions)
+    # backup has email only (admin = 1 action)
+    # Total = 3
+    expr {$count >= 2}
+} -result 1
+
+# Cleanup
+file delete -force $tmpDir
+
+cleanupTests

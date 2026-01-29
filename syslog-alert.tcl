@@ -109,6 +109,19 @@ oo::class create Contacts {
         append msg $body \n
 
         if {$debug} { puts "## msg: $msg" }
+
+        if {[info exists ::env(SYSLOG_ALERT_TESTMODE)] && $::env(SYSLOG_ALERT_TESTMODE)} {
+            # Test mode: append to capture file instead of sending email
+            set actionsFile [expr {[info exists ::env(SYSLOG_ALERT_ACTIONS_FILE)]
+                ? $::env(SYSLOG_ALERT_ACTIONS_FILE) : "/dev/stderr"}]
+            set fd [open $actionsFile a]
+            puts $fd "ACTION: to=<$to> subject=<$subject>"
+            puts $fd "BODY: $body"
+            puts $fd "---"
+            close $fd
+            return
+        }
+
         exec -- sendmail -oi -t << $msg &
     }
 
@@ -323,7 +336,7 @@ oo::class create Alert {
     }
 
     method Recent {delta hash} {
-        set now [clock seconds]
+        set now [expr {[info exists ::env(SYSLOG_ALERT_CLOCK)] ? $::env(SYSLOG_ALERT_CLOCK) : [clock seconds]}]
         set time [Db eval {SELECT time FROM alert WHERE hash=:hash}]
 
         if { [string length $time] <= 0} {
@@ -338,7 +351,8 @@ oo::class create Alert {
     }
 
     method purge {} {
-        set historic [expr {[clock seconds] - 259200}]
+        set now [expr {[info exists ::env(SYSLOG_ALERT_CLOCK)] ? $::env(SYSLOG_ALERT_CLOCK) : [clock seconds]}]
+        set historic [expr {$now - 259200}]
         Db eval {DELETE FROM alert WHERE time<=:historic}
     }
 
