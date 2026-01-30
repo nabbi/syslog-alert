@@ -54,13 +54,7 @@ proc run_script_stdin_env {input envPairs args} {
     }
     set cmd [concat [list $tclsh $script] $args]
     set rc [catch {exec {*}$cmd << $input 2>@1} output]
-    # Restore
-    foreach {k v} $envPairs {
-        if {$v eq "" && ![dict exists $saved $k]} {
-            unset -nocomplain ::env($k)
-        }
-    }
-    # Actually restore properly
+    # Restore original env state
     foreach {k v} $saved {
         if {$v eq ""} {
             unset -nocomplain ::env($k)
